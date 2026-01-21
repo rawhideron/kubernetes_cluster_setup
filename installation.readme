@@ -5,3 +5,4 @@ kubectl -n ingress-nginx patch deployment ingress-nginx-controller --type='merge
 kubectl get nodes
 kubectl -n ingress-nginx get pods
 kubectl apply -f sample-app.yaml
+kubectl apply -f robot-shop-ingress.yaml
