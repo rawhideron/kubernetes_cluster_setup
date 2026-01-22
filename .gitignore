@@ -1,0 +1,3 @@
+ingress-selfsigned.crt
+ingress-selfsigned.key
+ingress-selfsigned.cnf

@@ -36,16 +36,15 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: demo-web
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: nginx
   tls:
     - secretName: ingress-selfsigned
   rules:
-    - http:
+    - host: demo-web.local
+      http:
         paths:
-          - path: /demo-web
+          - path: /
             pathType: Prefix
             backend:
               service:

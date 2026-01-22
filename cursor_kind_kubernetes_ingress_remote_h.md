@@ -89,6 +89,24 @@ You can map a high port instead:
 
 Then hit `http://<docker-host-ip>:8080`.
 
+### Out-of-repo changes made during setup
+The following actions were performed outside the repo (not captured by the YAML/config files here):
+
+- `/etc/hosts` updates on client machines to map hosts to the public IP, e.g.:
+  ```
+  98.109.165.132  demo-web.local  robot-shop.local
+  ```
+- TLS trust store changes on the kind host:
+  - Copied cert to `/usr/local/share/ca-certificates/ingress-selfsigned.crt`
+  - Ran `update-ca-certificates`
+  - Imported the cert into the NSS store for Chromium/Chrome:
+    ```
+    certutil -d sql:"$HOME/.pki/nssdb" -A -t "C,," -n ingress-selfsigned -i ingress-selfsigned.crt
+    ```
+- Kubernetes TLS secrets created in-cluster (not stored in repo):
+  - `default/ingress-selfsigned`
+  - `robot-shop/ingress-selfsigned`
+
 ---
 
 This is the cleanest way to make kind-based ingress reachable from outside the Docker host without extra VPNs or proxies. If you want, I can help wire your existing manifests in this repo to the kind ingress flow.

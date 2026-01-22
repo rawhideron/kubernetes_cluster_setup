@@ -2,16 +2,15 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: robot-shop
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: nginx
   tls:
     - secretName: ingress-selfsigned
   rules:
-    - http:
+    - host: robot-shop.local
+      http:
         paths:
-          - path: /web
+          - path: /
             pathType: Prefix
             backend:
               service:
