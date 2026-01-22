@@ -2,13 +2,14 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: robot-shop
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: nginx
   rules:
-    - host: robot-shop.local
-      http:
+    - http:
         paths:
-          - path: /
+          - path: /web
             pathType: Prefix
             backend:
               service:
