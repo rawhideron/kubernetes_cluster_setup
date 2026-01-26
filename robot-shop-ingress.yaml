@@ -34,9 +34,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: invalid-page
+                name: web
                 port:
-                  number: 80
+                  number: 8080
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
