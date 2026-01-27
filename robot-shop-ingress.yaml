@@ -110,3 +110,13 @@ spec:
                 name: web
                 port:
                   number: 8080
+    - host: rawhideron.duckdns.org
+      http:
+        paths:
+          - path: /demo-web(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: demo-web
+                port:
+                  number: 8006

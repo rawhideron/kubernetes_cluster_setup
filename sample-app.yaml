@@ -29,25 +29,5 @@ spec:
     app: demo-web
   ports:
     - name: http
-      port: 80
+      port: 8006
       targetPort: 80
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: demo-web
-spec:
-  ingressClassName: nginx
-  tls:
-    - secretName: ingress-selfsigned
-  rules:
-    - host: demo-web.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: demo-web
-                port:
-                  number: 80
