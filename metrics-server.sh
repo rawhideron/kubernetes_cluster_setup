@@ -5,7 +5,7 @@ helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
 helm repo update
 
 release_name="metrics-server"
-namespace="kube-system"
+namespace="metrics-server"
 chart="metrics-server/metrics-server"
 args="{--kubelet-insecure-tls,--kubelet-preferred-address-types=InternalIP}"
 
