@@ -7,10 +7,12 @@ Prerequisites
 - `kubectl` installed and on your PATH
 
 Create a cluster
-Run the installer script which generates a kind config and creates the cluster:
+Run the installer script which generates a kind config and creates the cluster. The script checks that a container runtime (Docker, Podman, or containerd) is running and accessible. If you see permission errors communicating with Docker, either run the command with `sudo` or add your user to the `docker` group (create it first if it doesn't exist).
 
 ```bash
 ./installation.sh --name my-cluster --control-planes 1 --workers 2
+# or, if Docker requires root:
+# sudo ./installation.sh --name my-cluster --control-planes 1 --workers 2
 ```
 
 Arguments

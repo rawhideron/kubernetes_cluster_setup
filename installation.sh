@@ -21,6 +21,40 @@ CP_VAL="1"
 WORKER_VAL="0"
 IMAGE="kindest/node:v1.34.0"
 
+# verify that a container runtime is available before generating a config
+check_runtime() {
+    if command -v docker >/dev/null 2>&1; then
+        if ! docker info >/dev/null 2>&1; then
+            cat <<'ERR' >&2
+Docker is installed but the daemon isn't accessible. You may need to
+run this script with sudo or add your user to the 'docker' group:
+
+  sudo usermod -aG docker "$USER" && newgrp docker
+
+If you don't want Docker, install/enable a different runtime supported by
+kind (podman/containerd) and ensure the 'containerd' command is usable.
+ERR
+            exit 1
+        fi
+        return 0
+    fi
+
+    cat <<'ERR' >&2
+No container runtime detected. kind requires Docker, Podman, or
+containerd. Please install one of these and make sure its CLI is in
+PATH and the daemon is running.
+
+For Docker:
+  https://docs.docker.com/get-docker/
+
+For Podman or containerd, see upstream kind documentation.
+ERR
+    exit 1
+}
+
+# perform runtime check before anything else
+check_runtime
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--name)
@@ -38,20 +72,78 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-split_or_generate() {
-	local val="$1"; local prefix="$2"; local out_var="$3"
-	if [[ "$val" =~ ^[0-9]+$ ]]; then
-		local n="$val"
-		local arr=()
-		for i in $(seq 1 "$n"); do arr+=("${prefix}${i}"); done
-	else
-		IFS=',' read -r -a arr <<< "$val"
-	fi
-	eval "$out_var=(\"${arr[@]}\")"
+append_control_plane_nodes() {
+    local val="$1"
+    local first=true
+    if [[ "$val" =~ ^[0-9]+$ ]]; then
+        local n="$val"
+        for i in $(seq 1 "$n"); do
+            local node_name="${CLUSTER_NAME}-cp-${i}"
+            if [ "$first" = true ]; then
+                cat >> "$TMP_CONFIG" <<YAML
+- role: control-plane
+  extraPortMappings:
+    - containerPort: 80
+      hostPort: 80
+    - containerPort: 443
+      hostPort: 443
+  image: ${IMAGE}
+YAML
+                first=false
+            else
+                cat >> "$TMP_CONFIG" <<YAML
+- role: control-plane
+  image: ${IMAGE}
+YAML
+            fi
+        done
+    else
+        IFS=',' read -r -a items <<< "$val"
+        for item in "${items[@]}"; do
+            local node_name="${CLUSTER_NAME}-${item}"
+            if [ "$first" = true ]; then
+                cat >> "$TMP_CONFIG" <<YAML
+- role: control-plane
+  extraPortMappings:
+    - containerPort: 80
+      hostPort: 80
+    - containerPort: 443
+      hostPort: 443
+  image: ${IMAGE}
+YAML
+                first=false
+            else
+                cat >> "$TMP_CONFIG" <<YAML
+- role: control-plane
+  image: ${IMAGE}
+YAML
+            fi
+        done
+    fi
 }
 
-split_or_generate "$CP_VAL" "cp-" cp_nodes
-split_or_generate "$WORKER_VAL" "worker-" worker_nodes
+append_worker_nodes() {
+    local val="$1"
+    if [[ "$val" =~ ^[0-9]+$ ]]; then
+        local n="$val"
+        for i in $(seq 1 "$n"); do
+            local node_name="${CLUSTER_NAME}-worker-${i}"
+            cat >> "$TMP_CONFIG" <<YAML
+- role: worker
+  image: ${IMAGE}
+YAML
+        done
+    else
+        IFS=',' read -r -a items <<< "$val"
+        for item in "${items[@]}"; do
+            local node_name="${CLUSTER_NAME}-${item}"
+            cat >> "$TMP_CONFIG" <<YAML
+- role: worker
+  image: ${IMAGE}
+YAML
+        done
+    fi
+}
 
 TMP_CONFIG="$(mktemp --suffix=-kind-config.yaml)"
 cat > "$TMP_CONFIG" <<EOF
@@ -61,36 +153,8 @@ apiVersion: kind.x-k8s.io/v1alpha4
 nodes:
 EOF
 
-first_cp=true
-for name in "${cp_nodes[@]}"; do
-	if [ "$first_cp" = true ]; then
-		cat >> "$TMP_CONFIG" <<YAML
-- role: control-plane
-	name: ${CLUSTER_NAME}-${name}
-	extraPortMappings:
-		- containerPort: 80
-			hostPort: 80
-		- containerPort: 443
-			hostPort: 443
-	image: ${IMAGE}
-YAML
-		first_cp=false
-	else
-		cat >> "$TMP_CONFIG" <<YAML
-- role: control-plane
-	name: ${CLUSTER_NAME}-${name}
-	image: ${IMAGE}
-YAML
-	fi
-done
-
-for name in "${worker_nodes[@]}"; do
-	cat >> "$TMP_CONFIG" <<YAML
-- role: worker
-	name: ${CLUSTER_NAME}-${name}
-	image: ${IMAGE}
-YAML
-done
+append_control_plane_nodes "$CP_VAL"
+append_worker_nodes "$WORKER_VAL"
 
 echo "Using kind config: $TMP_CONFIG"
 cat "$TMP_CONFIG"
@@ -98,5 +162,38 @@ cat "$TMP_CONFIG"
 kind create cluster --name "$CLUSTER_NAME" --config "$TMP_CONFIG"
 
 kubectl get nodes --context "kind-${CLUSTER_NAME}"
+
+# Configure file descriptor limits on all nodes to prevent "too many open files" errors
+echo "Configuring file descriptor limits on all cluster nodes..."
+configure_node_limits() {
+    local node="$1"
+    docker exec "$node" bash -c "
+        # Clear any existing entries to avoid duplicates
+        sed -i '/^\* soft nofile/d; /^\* hard nofile/d; /^\* soft nproc/d; /^\* hard nproc/d' /etc/security/limits.conf
+        # Add the new limits
+        echo '* soft nofile 65536' >> /etc/security/limits.conf
+        echo '* hard nofile 65536' >> /etc/security/limits.conf
+        echo '* soft nproc 4096' >> /etc/security/limits.conf
+        echo '* hard nproc 4096' >> /etc/security/limits.conf
+        # Set kernel parameters
+        sysctl -w fs.file-max=2097152 >/dev/null 2>&1
+        sysctl -w fs.inotify.max_user_instances=8192 >/dev/null 2>&1
+    " 2>/dev/null && echo "  ✓ Configured $node" || echo "  ✗ Failed to configure $node"
+}
+
+# Get all node names and configure them
+for node in $(docker ps --filter "label=io.x-k8s.io/cluster=$CLUSTER_NAME" --format="{{.Names}}"); do
+    configure_node_limits "$node"
+done
+
+echo "Restarting kubelet on all nodes to apply limits..."
+for node in $(docker ps --filter "label=io.x-k8s.io/cluster=$CLUSTER_NAME" --format="{{.Names}}"); do
+    docker exec "$node" bash -c "systemctl restart kubelet" >/dev/null 2>&1 &
+done
+wait
+
+# Wait for all nodes to be ready
+echo "Waiting for all nodes to be ready..."
+kubectl wait --for=condition=Ready node --all --timeout=120s --context "kind-${CLUSTER_NAME}" >/dev/null 2>&1
 
 echo "Cluster '$CLUSTER_NAME' created. Temporary config kept at: $TMP_CONFIG"
