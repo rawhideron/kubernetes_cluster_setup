@@ -21,6 +21,32 @@ Arguments
 - `--workers VAL` — either a number or comma-separated names for worker nodes. Defaults to `0`.
 - `--image IMAGE` — kind node image (default `kindest/node:v1.34.0`).
 
+Example generated configuration
+The script dynamically generates a kind cluster config. For example, `./installation.sh --control-planes 1 --workers 4` produces:
+
+```yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+    - containerPort: 80
+      hostPort: 80
+    - containerPort: 443
+      hostPort: 443
+  image: kindest/node:v1.34.0
+- role: worker
+  image: kindest/node:v1.34.0
+- role: worker
+  image: kindest/node:v1.34.0
+- role: worker
+  image: kindest/node:v1.34.0
+- role: worker
+  image: kindest/node:v1.34.0
+```
+
+If you need a custom configuration, you can create your own YAML file and run `kind create cluster --config your-config.yaml` manually.
+
 Notes
 - The script prints the generated kind config file path; it's left in `/tmp` so you can inspect it.
 - To delete the cluster:
