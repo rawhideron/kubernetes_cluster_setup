@@ -59,6 +59,24 @@ The following must be installed on the machine before running any recovery steps
 - `velero` CLI
 - AWS CLI (`aws configure` completed with valid credentials)
 
+Install the velero CLI if not already present:
+
+```bash
+curl -fsSL https://github.com/vmware-tanzu/velero/releases/download/v1.14.1/velero-v1.14.1-linux-amd64.tar.gz \
+  | tar -xz -C /tmp && sudo mv /tmp/velero-v1.14.1-linux-amd64/velero /usr/local/bin/velero
+```
+
+Install the helm and helmfile binaries if not already present:
+
+```bash
+# helm
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# helmfile
+curl -fsSL https://github.com/helmfile/helmfile/releases/download/v0.169.2/helmfile_0.169.2_linux_amd64.tar.gz \
+  | tar -xz -C /tmp && sudo mv /tmp/helmfile /usr/local/bin/helmfile
+```
+
 Verify helm-diff plugin is installed (required by helmfile):
 
 ```bash
