@@ -197,3 +197,17 @@ echo "Waiting for all nodes to be ready..."
 kubectl wait --for=condition=Ready node --all --timeout=120s --context "kind-${CLUSTER_NAME}" >/dev/null 2>&1
 
 echo "Cluster '$CLUSTER_NAME' created. Temporary config kept at: $TMP_CONFIG"
+
+# Ensure MinIO is running to serve local velero backups
+echo "Starting MinIO for local velero backup storage..."
+if docker inspect minio-local >/dev/null 2>&1; then
+    docker start minio-local >/dev/null 2>&1 && echo "  ✓ MinIO restarted" || echo "  ✗ Failed to start MinIO"
+else
+    docker run -d --name minio-local \
+        -p 9000:9000 -p 9001:9001 \
+        -v /home/ron-goodman/velero-backups:/data \
+        -e MINIO_ROOT_USER=minioadmin \
+        -e MINIO_ROOT_PASSWORD=minioadmin \
+        quay.io/minio/minio server /data --console-address ":9001" >/dev/null 2>&1 \
+        && echo "  ✓ MinIO started" || echo "  ✗ Failed to start MinIO"
+fi

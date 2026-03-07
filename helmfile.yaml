@@ -1,0 +1,199 @@
+repositories:
+  - name: metrics-server
+    url: https://kubernetes-sigs.github.io/metrics-server
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+  - name: grafana
+    url: https://grafana.github.io/helm-charts
+  - name: vmware-tanzu
+    url: https://vmware-tanzu.github.io/helm-charts
+  - name: jetstack
+    url: https://charts.jetstack.io
+  - name: bitnami
+    url: https://charts.bitnami.com/bitnami
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+  - name: elastic
+    url: https://helm.elastic.co
+  - name: fluent
+    url: https://fluent.github.io/helm-charts
+
+releases:
+  - name: metrics-server
+    namespace: kube-system
+    chart: metrics-server/metrics-server
+    version: 3.12.2
+    values:
+      - args:
+          - --kubelet-insecure-tls
+
+  - name: prometheus
+    namespace: monitoring
+    chart: prometheus-community/prometheus
+    version: 25.27.0
+    values:
+      - server:
+          persistentVolume:
+            enabled: false
+        alertmanager:
+          persistentVolume:
+            enabled: false
+
+  - name: grafana
+    namespace: monitoring
+    chart: grafana/grafana
+    version: 8.8.4
+    needs:
+      - monitoring/prometheus
+    values:
+      - persistence:
+          enabled: false
+        adminPassword: admin
+        datasources:
+          datasources.yaml:
+            apiVersion: 1
+            datasources:
+              - name: Prometheus
+                type: prometheus
+                url: http://prometheus-server.monitoring.svc.cluster.local
+                isDefault: true
+
+  - name: velero
+    namespace: velero
+    chart: vmware-tanzu/velero
+    version: 7.2.1
+    values:
+      - initContainers:
+          - name: velero-plugin-for-aws
+            image: velero/velero-plugin-for-aws:v1.10.0
+            volumeMounts:
+              - mountPath: /target
+                name: plugins
+        configuration:
+          backupStorageLocation:
+            - name: default
+              provider: aws
+              bucket: goodman-reunion-velero-backups
+              config:
+                region: us-east-1
+                prefix: backups
+            - name: local
+              provider: aws
+              bucket: backups
+              credential:
+                name: velero-minio-credentials
+                key: cloud
+              default: false
+              config:
+                region: minio
+                s3ForcePathStyle: "true"
+                s3Url: http://172.18.0.1:9000
+          volumeSnapshotLocation:
+            - name: default
+              provider: aws
+              config:
+                region: us-east-1
+        credentials:
+          useSecret: true
+          existingSecret: velero-aws-credentials
+        snapshotsEnabled: false
+        upgradeCRDs: false
+
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: 1.16.3
+    values:
+      - crds:
+          enabled: true
+
+  - name: keycloak
+    namespace: auth
+    chart: bitnami/keycloak
+    version: 24.4.3
+    values:
+      - auth:
+          adminUser: admin
+          adminPassword: admin
+        postgresql:
+          enabled: true
+          auth:
+            password: keycloak
+            postgresPassword: keycloak
+        persistence:
+          enabled: false
+
+  - name: argocd
+    namespace: argocd
+    chart: argo/argo-cd
+    version: 7.7.21
+    values:
+      - configs:
+          params:
+            server.insecure: true
+        server:
+          service:
+            type: ClusterIP
+
+  - name: elasticsearch
+    namespace: logging
+    chart: elastic/elasticsearch
+    version: 8.5.1
+    values:
+      - replicas: 1
+        minimumMasterNodes: 1
+        persistence:
+          enabled: false
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        esJavaOpts: "-Xmx1g -Xms1g"
+        protocol: http
+        createCert: false
+        esConfig:
+          elasticsearch.yml: |
+            xpack.security.enabled: false
+            xpack.security.enrollment.enabled: false
+            xpack.security.http.ssl.enabled: false
+            xpack.security.transport.ssl.enabled: false
+
+  - name: kibana
+    namespace: logging
+    chart: elastic/kibana
+    version: 8.5.1
+    needs:
+      - logging/elasticsearch
+    values:
+      - elasticsearchHosts: http://elasticsearch-master.logging.svc.cluster.local:9200
+        elasticsearchCertificateSecret: elasticsearch-master-certs
+        protocol: http
+        persistence:
+          enabled: false
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+
+  - name: fluent-bit
+    namespace: logging
+    chart: fluent/fluent-bit
+    version: 0.47.9
+    needs:
+      - logging/elasticsearch
+    values:
+      - config:
+          outputs: |
+            [OUTPUT]
+                Name  es
+                Match *
+                Host  elasticsearch-master.logging.svc.cluster.local
+                Port  9200
+                Index fluent-bit
+                Suppress_Type_Name On
