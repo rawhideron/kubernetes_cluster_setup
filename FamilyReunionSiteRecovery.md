@@ -7,7 +7,7 @@ Kubernetes cluster using Velero backups stored in AWS S3 and locally via MinIO.
 
 ## How Recovery Works
 
-```
+```text
   PRODUCTION CLUSTER
   ┌─────────────────────────────────────┐
   │  ArgoCD  │  Keycloak  │  Apps  ...  │
@@ -28,21 +28,23 @@ Kubernetes cluster using Velero backups stored in AWS S3 and locally via MinIO.
              │ restore on demand
              ▼
   REUNION CLUSTER (this machine)
-  ┌─────────────────────────────────────────────────────┐
-  │  Step 1: ./installation.sh   (create kind cluster)  │
-  │  Step 2: helmfile sync       (install infrastructure)│
-  │  Step 3: velero restore create (restore apps)       │
-  │                                                     │
-  │  Infrastructure          Restored from backup       │
-  │  ─────────────           ──────────────────────     │
-  │  metrics-server          ArgoCD                     │
-  │  Prometheus              Keycloak                   │
-  │  Grafana                 Application namespaces     │
-  │  Velero                                             │
-  │  cert-manager                                       │
-  │  Elasticsearch                                      │
-  │  Kibana / Fluent Bit                                │
-  └─────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────┐
+  │  Step 1: ./installation.sh    (create kind cluster)      │
+  │  Step 2: helmfile sync        (install infrastructure)   │
+  │  Step 3: velero restore create (restore apps)            │
+  │  Step 4: kubectl apply        (create ingress rules)     │
+  │                                                          │
+  │  Infrastructure          Restored from backup            │
+  │  ─────────────           ──────────────────────          │
+  │  ingress-nginx           ArgoCD                          │
+  │  metrics-server          Keycloak                        │
+  │  Prometheus              Application namespaces          │
+  │  Grafana                      ↓                          │
+  │  Velero              ingress-reunion.yaml                │
+  │  cert-manager        routes external traffic to          │
+  │  Elasticsearch       goodmanreunion.duckdns.org          │
+  │  Kibana / Fluent Bit                                     │
+  └──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -100,6 +102,7 @@ cd /home/ron-goodman/Projects/kubernetes_cluster_setup
 ```
 
 This script:
+
 - Creates the kind cluster named `reunion`
 - Configures file descriptor limits on all nodes
 - Starts MinIO in Docker to serve local backup files from `/home/ron-goodman/velero-backups`
@@ -139,17 +142,19 @@ helmfile sync
 This installs all helm releases defined in `helmfile.yaml`:
 
 | Release | Namespace | Purpose |
-|---------|-----------|---------|
+| ------- | --------- | ------- |
+| ingress-nginx | ingress-nginx | External traffic routing |
 | metrics-server | kube-system | CPU/memory metrics for kubectl top and HPA |
 | prometheus | monitoring | Metrics collection |
 | grafana | monitoring | Metrics dashboards (pre-wired to Prometheus) |
 | velero | velero | Backup and restore |
 | cert-manager | cert-manager | TLS certificate management |
-| keycloak | auth | Identity and access management |
-| argocd | argocd | GitOps continuous delivery |
 | elasticsearch | logging | Log storage |
 | kibana | logging | Log dashboards |
 | fluent-bit | logging | Log shipping from pods to Elasticsearch |
+
+> Note: ArgoCD and Keycloak are intentionally not installed here. They are restored from the
+> Velero backup in Step 6, which ensures the production configuration takes priority.
 
 ### Step 4 — Verify Backup Storage Locations
 
@@ -161,7 +166,7 @@ velero backup-location get
 
 Expected output:
 
-```
+```text
 NAME      PROVIDER   BUCKET/PREFIX                          PHASE
 default   aws        goodman-reunion-velero-backups/backups  Available
 local     aws        backups                                 Available
@@ -185,16 +190,27 @@ earlier point in time.
 
 ### Step 6 — Run the Restore
 
+Always exclude the `velero` and `cert-manager` namespaces from the restore:
+
+- **`velero`** — the production backup contains a twice-daily Schedule CR. If restored, the
+  reunion cluster would start writing backups to the same S3 bucket, potentially overwriting
+  production backups. The velero infrastructure is already installed by helmfile.
+- **`cert-manager`** — the production backup may contain ClusterIssuers and Certificate resources
+  that would attempt Let's Encrypt renewals. The reunion cluster is not publicly reachable, so
+  the ACME challenges would fail and cert-manager would enter a retry loop.
+
 **Restore from AWS S3 (primary):**
 
 ```bash
-velero restore create --from-backup twice-daily-backup-20260306140044
+velero restore create --from-backup twice-daily-backup-20260306140044 \
+  --exclude-namespaces velero,cert-manager
 ```
 
 **Restore from local MinIO (fallback — use when S3 is unavailable):**
 
 ```bash
 velero restore create --from-backup twice-daily-backup-20260306140044 \
+  --exclude-namespaces velero,cert-manager \
   --storage-location local
 ```
 
@@ -215,14 +231,45 @@ velero restore describe <restore-name>
 Wait until the restore phase shows `Completed`. Some pods may take additional time to
 reach `Running` state after the restore completes.
 
+> Note: A `PartiallyFailed` status caused only by `error to check node agent status: daemonset not found`
+> is non-critical and can be ignored. It does not affect the application restore.
+
+### Step 8 — Apply the Ingress Rule
+
+The ingress resource for `goodmanreunion.duckdns.org/reunion` is not included in the
+Velero backup and must be applied manually after the restore:
+
+```bash
+kubectl apply -f ingress-reunion.yaml
+```
+
+This routes external HTTPS traffic to the `reunion-web` service inside the cluster.
+
+### Step 9 — Verify the Site is Live
+
+Use port-forward to test the local recovery cluster directly, avoiding any risk of
+accidentally hitting the production server:
+
+```bash
+kubectl port-forward -n reunion svc/reunion-web 8888:80 &
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8888/
+```
+
+A response of `200` confirms `reunion-web` is running and serving traffic in the
+recovery cluster. Kill the port-forward when done:
+
+```bash
+kill %1
+```
+
 ---
 
 ## Backup Storage Locations
 
-| Name | Provider | Location | Use |
-|------|----------|----------|-----|
-| `default` | AWS S3 | `s3://goodman-reunion-velero-backups/backups/` | Primary |
-| `local` | MinIO (Docker) | `/home/ron-goodman/velero-backups/backups/` | Fallback |
+| Name      | Provider       | Location                                       | Use      |
+| --------- | -------------- | ---------------------------------------------- | -------- |
+| `default` | AWS S3         | `s3://goodman-reunion-velero-backups/backups/` | Primary  |
+| `local`   | MinIO (Docker) | `/home/ron-goodman/velero-backups/backups/`    | Fallback |
 
 The `local` BSL is served by a MinIO Docker container (`minio-local`) that mounts the
 local backup directory. The `installation.sh` script starts this container automatically.
@@ -279,15 +326,16 @@ it can restore anything. The `velero restore` command is a separate, final step.
 
 ---
 
-**Q: Can all three recovery commands be run from inside the repository directory?**
+**Q: Can all the recovery commands be run from inside the repository directory?**
 
-Yes. All three commands work from `/home/ron-goodman/Projects/kubernetes_cluster_setup/`:
+Yes. All commands work from `/home/ron-goodman/Projects/kubernetes_cluster_setup/`:
 
 - `./installation.sh` — uses the local script
 - `helmfile sync` — reads `helmfile.yaml` from the current directory
 - `velero restore create ...` — uses the kubectl context set by `installation.sh`
+- `kubectl apply -f ingress-reunion.yaml` — uses the manifest in the repo
 
-Your full disaster recovery is three commands from one directory.
+Your full disaster recovery runs entirely from one directory.
 
 ---
 

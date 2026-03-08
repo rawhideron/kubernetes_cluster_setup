@@ -9,16 +9,26 @@ repositories:
     url: https://vmware-tanzu.github.io/helm-charts
   - name: jetstack
     url: https://charts.jetstack.io
-  - name: bitnami
-    url: https://charts.bitnami.com/bitnami
-  - name: argo
-    url: https://argoproj.github.io/argo-helm
   - name: elastic
     url: https://helm.elastic.co
   - name: fluent
     url: https://fluent.github.io/helm-charts
+  - name: ingress-nginx
+    url: https://kubernetes.github.io/ingress-nginx
 
 releases:
+  - name: ingress-nginx
+    namespace: ingress-nginx
+    chart: ingress-nginx/ingress-nginx
+    version: 4.11.0
+    values:
+      - controller:
+          hostPort:
+            enabled: true
+          service:
+            type: NodePort
+          kind: DaemonSet
+
   - name: metrics-server
     namespace: kube-system
     chart: metrics-server/metrics-server
@@ -106,34 +116,6 @@ releases:
     values:
       - crds:
           enabled: true
-
-  - name: keycloak
-    namespace: auth
-    chart: bitnami/keycloak
-    version: 24.4.3
-    values:
-      - auth:
-          adminUser: admin
-          adminPassword: admin
-        postgresql:
-          enabled: true
-          auth:
-            password: keycloak
-            postgresPassword: keycloak
-        persistence:
-          enabled: false
-
-  - name: argocd
-    namespace: argocd
-    chart: argo/argo-cd
-    version: 7.7.21
-    values:
-      - configs:
-          params:
-            server.insecure: true
-        server:
-          service:
-            type: ClusterIP
 
   - name: elasticsearch
     namespace: logging
